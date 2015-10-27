@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Chrome Debugger Target Document</title>
+  <link rel="import" href="//polygit.org/components/paper-button/paper-button.html">
+</head>
+<body>
+  <button onclick="makeButton();">Make Button</button>
+  <button onclick="removeButton();">Remove Button</button>
+
+  <script>
+    function makeButton() {
+      var button = document.createElement('paper-button')
+      Polymer.dom(button).textContent = 'Hi';
+      document.body.appendChild(button);
+    }
+
+    function removeButton() {
+      document.body.querySelector('paper-button').remove();
+    }
+  </script>
+</body>
+</html>

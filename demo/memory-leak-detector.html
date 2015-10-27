@@ -1,0 +1,116 @@
+<link rel="import" href="../chrome-debugger.html">
+<link rel="import" href="//polygit.org/components/paper-toggle-button/paper-toggle-button.html">
+<dom-module id="memory-leak-detector">
+  <template>
+    <chrome-debugger
+      target-title="Debugger Target"
+      channel="{{channel}}">
+    </chrome-debugger>
+    <paper-toggle-button checked="{{_record}}" disabled="[[!_hasChannel(channel)]]">Record Target</paper-toggle-button>
+    <h3>Counters before</h3>
+    <pre>{{_stringify(firstCounters)}}</pre>
+    <h3>Counters after</h3>
+    <pre>{{_stringify(lastCounters)}}</pre>
+  </template>
+</dom-module>
+<script>
+  Polymer({
+    is: 'memory-leak-detector',
+
+    properties: {
+      channel: {
+        type: Object,
+        observer: '_channelChanged',
+        value: null
+      },
+
+      firstCounters: {
+        type: Object
+      },
+
+      lastCounters: {
+        type: Object
+      },
+
+      _record: {
+        type: Boolean,
+        observer: '_recordChanged'
+      }
+    },
+
+    record: function() {
+      this.channel.send({
+        method: 'Tracing.start',
+        params: {
+          categories: 'blink.console,disabled-by-default-devtools.timeline',
+          options: 'sampling-frequency=50',
+          transferMode: 'ReportEvents'
+        }
+      });
+    },
+
+    created: function() {
+      this._boundOnSocketMessage = this._onSocketMessage.bind(this);
+    },
+
+    stopRecording: function() {
+      this.channel && this.channel.send({
+        method: 'Tracing.end'
+      });
+    },
+
+    _recordChanged: function(record) {
+      if (record) {
+        this.firstCounters = null;
+        this.lastCounters = null;
+        this.record();
+      } else {
+        this.stopRecording();
+      }
+    },
+
+    _channelChanged: function(channel, oldChannel) {
+      if (oldChannel) {
+        oldChannel.socket.removeEventListener('message', this._boundOnSocketMessage);
+      }
+
+      if (channel) {
+        channel.socket.addEventListener('message', this._boundOnSocketMessage);
+      }
+    },
+
+    _hasChannel: function(channel) {
+      return !!channel;
+    },
+
+    _onSocketMessage: function(message) {
+      var data = JSON.parse(message.data);
+      var counters;
+
+      console.log(data.method);
+      if (data.method === 'Tracing.dataCollected') {
+        for (var i = 0; i < data.params.value.length; ++i) {
+          if (data.params.value[i].name !== 'UpdateCounters') {
+            continue;
+          }
+
+          counters = data.params.value[i].args.data;
+
+          console.log(data.params.value[i].args);
+
+          if (!this.firstCounters) {
+            this.firstCounters = counters;
+          }
+        }
+
+        if (counters) {
+          this.lastCounters = counters;
+        }
+      }
+    },
+
+    _stringify: function(object) {
+      return JSON.stringify(object, null, 2);
+    }
+  });
+</script>

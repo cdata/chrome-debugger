@@ -1,0 +1,298 @@
+<link rel="import" href="//polygit.org/components/iron-ajax/iron-ajax.html">
+<dom-module id="chrome-debugger">
+  <template>
+    <iron-ajax
+      id="ajax"
+      url="[[_debugTargetListLocation(host, port)]]"
+      on-last-response-changed="_updateDebugTargetList"
+      auto>
+    </iron-ajax>
+    <pre>{{_stringify(logs, logs.length)}}</pre>
+  </template>
+</dom-module>
+<script>
+
+  function ProtocolChannel(socket) {
+    var messageId = 0;
+    return {
+      get socket() {
+        return socket;
+      },
+
+      send: function(message) {
+        message.id = messageId++;
+        this.socket.send(JSON.stringify(message));
+      }
+    }
+  }
+
+  Polymer({
+    is: 'chrome-debugger',
+
+    properties: {
+      targetTitle: {
+        type: String,
+        value: function() {
+          return document.title;
+        }
+      },
+
+      host: {
+        type: String,
+        reflectToAttribute: true,
+        value: function() {
+          return window.location.hostname;
+        }
+      },
+
+      port: {
+        type: Number,
+        reflectToAttribute: true,
+        value: 9222
+      },
+
+      logs: {
+        type: Array,
+        readOnly: true,
+        value: function() {
+          return [];
+        }
+      },
+
+      debugTargetList: {
+        type: Object,
+        readOnly: true
+      },
+
+      debugTarget: {
+        type: Object,
+        notify: true,
+        computed: '_computeDebugTarget(debugTargetList, targetTitle)'
+      },
+
+      webSocketLocation: {
+        type: String,
+        notify: true,
+        reflectToAttribute: true,
+        computed: '_computeWebSocketLocation(debugTarget)'
+      },
+
+      socket: {
+        type: Object,
+        notify: true,
+        computed: '_computeSocket(webSocketLocation)',
+        observer: '_socketChanged'
+      },
+
+      channel: {
+        type: Object,
+        notify: true,
+        readOnly: true
+      },
+
+      console: {
+        type: Boolean,
+        value: false
+      },
+
+      network: {
+        type: Boolean,
+        value: false
+      },
+
+      page: {
+        type: Boolean,
+        value: false
+      },
+
+      runtime: {
+        type: Boolean,
+        value: false
+      },
+
+      dom: {
+        type: Boolean,
+        value: false
+      },
+
+      css: {
+        type: Boolean,
+        value: false
+      },
+
+      worker: {
+        type: Boolean,
+        value: false
+      },
+
+      profiler: {
+        type: Boolean,
+        value: false
+      },
+
+      heapProfiler: {
+        type: Boolean,
+        value: false
+      },
+
+      serviceWorker: {
+        type: Boolean,
+        value: false
+      },
+
+      inspector: {
+        type: Boolean,
+        value: false
+      },
+
+      _featuresToEnable: {
+        type: Object,
+        computed: '_computeFeaturesToEnable(console, network, page, runtime, dom, css, worker, profiler, heapProfiler, serviceWorker, inspector)'
+      }
+    },
+
+    created: function() {
+      this._pollId = null;
+      this._boundOnSocketOpen = this._onSocketOpen.bind(this);
+      this._boundOnSocketClose = this._onSocketClose.bind(this);
+      this._boundOnSocketError = this._onSocketError.bind(this);
+    },
+
+    attached: function() {
+      this._poll();
+    },
+
+    detached: function() {
+      this._stopPolling();
+      this._setDebugTargetList([]);
+    },
+
+    _poll: function() {
+      this._pollId = this.async(function() {
+        this.$.ajax.generateRequest();
+
+        if (this._pollId != null) {
+          this._poll();
+        }
+      }, 3000);
+    },
+
+    _stopPolling: function() {
+      if (this._pollId == null) {
+        return;
+      }
+
+      this.cancelAsync(this._pollId);
+      this._pollId = null;
+    },
+
+    _debugTargetListLocation: function(host, port) {
+      return '//' + host + ':' + port + '/json/list';
+    },
+
+    _stringify: function(logs) {
+      return logs.join('\n');
+    },
+
+    _log: function() {
+      var args = Array.prototype.slice.call(arguments);
+      this.push('logs', args.join(' '))
+    },
+
+    _updateDebugTargetList: function(event) {
+      if (!event.detail.value) {
+        return;
+      }
+
+      this._setDebugTargetList(event.detail.value);
+    },
+
+    _computeFeaturesToEnable: function(console, network, page, runtime, dom, css, worker, profiler, serviceWorker, inspector) {
+      return {
+        console: console,
+        network: network,
+        page: page,
+        runtime: runtime,
+        dom: dom,
+        css: css,
+        worker: worker,
+        profiler: profiler,
+        serviceWorker: serviceWorker,
+        inspector: inspector
+      };
+    },
+
+    _computeDebugTarget: function(debugTargetList, targetTitle) {
+      var matcher = new RegExp(targetTitle);
+
+      for (var i = 0; i < debugTargetList.length; ++i) {
+        if (matcher.test(debugTargetList[i].title)) {
+          return debugTargetList[i];
+        }
+      }
+    },
+
+    _computeWebSocketLocation: function(debugTarget) {
+      return (debugTarget && debugTarget.webSocketDebuggerUrl) ?
+        debugTarget.webSocketDebuggerUrl :
+        this.webSocketLocation;
+    },
+
+    _computeSocket: function(webSocketLocation) {
+      this._log('Connecting to', webSocketLocation);
+      return new WebSocket(webSocketLocation);
+    },
+
+    _socketChanged: function(socket, oldSocket) {
+      if (oldSocket) {
+        this._stopListeningToSocket(oldSocket);
+      }
+
+      if (socket) {
+        this._listenToSocket(socket);
+      }
+    },
+
+    _listenToSocket: function(socket) {
+      socket.addEventListener('open', this._boundOnSocketOpen);
+      socket.addEventListener('close', this._boundOnSocketClose);
+      socket.addEventListener('error', this._boundOnSocketError);
+    },
+
+    _stopListeningToSocket: function(socket) {
+      socket.removeEventListener('open', this._boundOnSocketOpen);
+      socket.removeEventListener('close', this._boundOnSocketClose);
+      socket.removeEventListener('error', this._boundOnSocketError);
+    },
+
+    _onSocketOpen: function() {
+      var channel = ProtocolChannel(this.socket);
+
+      this._log('Socket opened!');
+
+      for (var feature in this._featuresToEnable) {
+        if (!this._featuresToEnable[feature]) {
+          continue;
+        }
+
+        feature = feature.substr(0, 1).toUpperCase() + feature.substr(1);
+
+        this._log('Requesting debugging feature', feature);
+
+        channel.send({
+          method: feature + '.enable'
+        });
+      }
+
+      this._setChannel(channel);
+    },
+
+    _onSocketClose: function() {
+      this._log('Socket closed!');
+    },
+
+    _onSocketError: function(error) {
+      this._log('Socket error!', error);
+    }
+  });
+</script>
